@@ -81,6 +81,7 @@ import {
   TxStatus,
   type TxValidationResult,
 } from '@aztec/stdlib/tx';
+import type { ValidatorsStats } from '@aztec/stdlib/validators';
 import {
   Attributes,
   type TelemetryClient,
@@ -92,6 +93,8 @@ import {
 import { createValidatorClient } from '@aztec/validator-client';
 import { createWorldStateSynchronizer } from '@aztec/world-state';
 
+import { createSentinel } from '../sentinel/factory.js';
+import { Sentinel } from '../sentinel/sentinel.js';
 import { type AztecNodeConfig, getPackageVersion } from './config.js';
 import { NodeMetrics } from './node_metrics.js';
 
@@ -114,6 +117,7 @@ export class AztecNodeService implements AztecNode, AztecNodeAdmin, Traceable {
     protected readonly nullifierSource: NullifierWithBlockSource,
     protected readonly worldStateSynchronizer: WorldStateSynchronizer,
     protected readonly sequencer: SequencerClient | undefined,
+    protected readonly validatorsSentinel: Sentinel | undefined,
     protected readonly l1ChainId: number,
     protected readonly version: number,
     protected readonly globalVariableBuilder: GlobalVariableBuilder,
@@ -203,6 +207,9 @@ export class AztecNodeService implements AztecNode, AztecNodeAdmin, Traceable {
 
     const validatorClient = createValidatorClient(config, { p2pClient, telemetry, dateProvider, epochCache });
 
+    const validatorsSentinel = await createSentinel(epochCache, archiver, p2pClient, config);
+    await validatorsSentinel?.start();
+
     // now create the sequencer
     const sequencer = config.disableValidator
       ? undefined
@@ -230,6 +237,7 @@ export class AztecNodeService implements AztecNode, AztecNodeAdmin, Traceable {
       archiver,
       worldStateSynchronizer,
       sequencer,
+      validatorsSentinel,
       ethereumChain.chainInfo.id,
       config.version,
       new GlobalVariableBuilder(config),
@@ -482,6 +490,7 @@ export class AztecNodeService implements AztecNode, AztecNodeAdmin, Traceable {
    */
   public async stop() {
     this.log.info(`Stopping`);
+    await this.validatorsSentinel?.stop();
     await this.sequencer?.stop();
     await this.p2pClient.stop();
     await this.worldStateSynchronizer.stop();
@@ -967,6 +976,10 @@ export class AztecNodeService implements AztecNode, AztecNodeAdmin, Traceable {
     }
     this.sequencer.flush();
     return Promise.resolve();
+  }
+
+  public getValidatorsStats(): Promise<ValidatorsStats> {
+    return this.validatorsSentinel?.computeStats() ?? Promise.resolve({ stats: {}, slotWindow: 0 });
   }
 
   /**
