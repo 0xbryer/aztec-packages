@@ -1,0 +1,204 @@
+name: Devnet network tests
+on:
+  pull_request:
+    paths:
+      - '**.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: "00 08 * * 1-5"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  USERNAME: ${{ github.event.pull_request.user.login || github.actor }}
+  GITHUB_TOKEN: ${{ github.token }}
+  GIT_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+  CONTRACT_S3_BUCKET: s3://aztec-ci-artifacts
+jobs:
+  cli-wallet:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-2
+
+      - name: Reset state
+        run: |
+          echo '{"accounts": [], "contracts": []}'> state.json
+          aws s3 cp ./state.json ${{ env.CONTRACT_S3_BUCKET }}/build-cache/devnet-nightly-tests-state.json
+
+      - name: Install aztec
+        run: |
+          set -eu -o pipefail
+          bash -i <(curl -s https://install.aztec.network)
+          echo "/home/runner/.aztec/bin" >> $GITHUB_PATH
+
+      - name: Specify aztec version
+        run: |
+          set -eu -o pipefail
+          aztec-up -v 0.81.0
+
+      - name: Retrieve state from s3
+        run: |
+          set -eu -o pipefail
+          aws s3 cp ${{ env.CONTRACT_S3_BUCKET }}/build-cache/devnet-nightly-tests-state.json ./state.json || echo '{"accounts": [], "contracts": []}'> state.json
+          cat ./state.json
+
+      - name: Restore state
+        run: |
+          # Read the entire accounts array and process each item
+          jq -c '.accounts[]' state.json | while read -r account; do
+            address=$(echo $account | jq -r '.address')
+            secretKey=$(echo $account | jq -r '.secretKey')
+
+            aztec-wallet create-account --secret-key $secretKey --register-only --node-url http://104.198.9.16:8080
+
+          done
+
+      - name: Add contracts
+        run: |
+          token_contract_count=$(jq '.contracts | map(select(.type=="token")) | length' state.json)
+
+          aztec-wallet import-test-accounts --node-url http://104.198.9.16:8080
+          jq -c '.contracts | map(select(.type=="token"))[]' state.json | while read -r contract; do
+            token_address=$(echo "$contract" | jq -r '.address')
+
+            echo "Processing token contract at $token_address"
+            aztec-wallet register-contract "$token_address" Token -f accounts:test0 --node-url http://104.198.9.16:8080
+          done
+
+          # consider doing the same as accounts here
+          max_token_contracts=1
+          if [ "$token_contract_count" -lt "$max_token_contracts" ]; then
+            new_token_contracts="[]"
+
+            for i in $(seq 1 $((max_token_contracts - token_contract_count))); do
+              new_token_contract_address=$(aztec-wallet deploy Token --args accounts:test0 Test TST 18 -f test0 --node-url http://104.198.9.16:8080 -a token | grep "Contract deployed at" | awk '{print $4}')
+
+              new_token_contract=$(jq -n --arg address "$new_token_contract_address" '{"address": $address, "type": "token"}')
+              new_token_contracts=$(echo "$new_token_contracts" | jq --argjson contract "$new_token_contract" '. += [$contract]')
+            done
+
+            echo "$new_token_contracts" | jq '.'
+            echo "new_token_contracts=$(echo "$new_token_contracts" | jq -c -r '[.[].address] | join(",")' )"
+            echo "new_token_contracts=$(echo "$new_token_contracts" | jq -c -r '[.[].address] | join(",")' )" >> "$GITHUB_OUTPUT"
+
+            jq --argjson new_token_contracts "$new_token_contracts" '.contracts += $new_token_contracts' state.json > tmp.json && mv tmp.json state.json
+          fi
+
+      - name: Add new accounts
+        id: add-new-accounts
+        run: |
+          num_new_accounts=2
+          new_accounts="[]"
+
+          for i in $(seq 1 $num_new_accounts); do
+            new_account=$(aztec-wallet create-account -a main --register-only --node-url http://104.198.9.16:8080 --json | grep -Pzo '(?s)\{.*\}')
+
+            # Validate JSON
+            echo "$new_account" | jq '.'
+
+            aztec-wallet bridge-fee-juice 99900000000000000000 main --mint --node-url http://104.198.9.16:8080 --l1-rpc-urls http://35.233.242.32:8545 --l1-chain-id 1337
+            # waits two blocks for l2 message to become available
+            sleep 1.5m
+            aztec-wallet deploy-account -f main --payment method=fee_juice,claim --node-url http://104.198.9.16:8080
+
+            new_accounts=$(echo "$new_accounts" | jq --argjson acc "$new_account" '. += [$acc]')
+          done
+
+          echo "$new_accounts" | jq '.'
+
+          echo "new_accounts=$(echo "$new_accounts" | jq -c -r '[.[].address] | join(",")' )" >> "$GITHUB_OUTPUT"
+
+          jq --argjson new_accounts "$new_accounts" '.accounts += $new_accounts' state.json > tmp.json && mv tmp.json state.json
+
+      - name: Process accounts
+        run: |
+          jq -c '.accounts[]' state.json | while read -r account; do
+            current_user_address=$(echo $account | jq -r '.address')
+
+            jq -c '.contracts | map(select(.type=="token"))[]' state.json | while read -r contract; do
+              token_address=$(echo "$contract" | jq -r '.address')
+
+              echo "Processing token contract at $token_address"
+              aztec-wallet register-contract "$token_address" Token -f "$current_user_address" --node-url http://104.198.9.16:8080
+            done
+
+            AMOUNT=420
+
+            new_accounts="${{ steps.add-new-accounts.outputs.new_accounts }}"
+            if echo "$new_accounts" | jq --arg address "$current_user_address" 'map(.address) | contains([$address])' | grep -q "true"; then
+                # mint from all tokens
+                jq -c '.contracts | map(select(.type=="token"))[]' state.json | while read -r contract; do
+                  token_address=$(echo "$token" | jq -r '.address')
+                  aztec-wallet send mint_to_public -ca "$token_address" --args "$current_user_address" "$AMOUNT" -f test0 --node-url http://104.198.9.16:8080
+
+                  RESULT=$(aztec-wallet simulate balance_of_public -ca "$token_address" --args "$current_user_address" -f "$current_user_address" --node-url http://104.198.9.16:8080 | grep "Simulation result:" | awk '{print $3}')
+
+                  echo "Account $current_user_address public balance is ${RESULT}"
+                done
+            else
+              echo "${{ steps.add-new-accounts.outputs.new_token_contracts }}" | tr ',' '\n' | while read -r token_address; do
+                echo "Address is: $token_address"
+                aztec-wallet send mint_to_public -ca "$token_address" --args "$current_user_address" "$AMOUNT" -f test0 --node-url http://104.198.9.16:8080
+
+                RESULT=$(aztec-wallet simulate balance_of_public -ca "$token_address" --args "$current_user_address" -f "$current_user_address" --node-url http://104.198.9.16:8080 | grep "Simulation result:" | awk '{print $3}')
+
+                echo "Account $current_user_address public balance is ${RESULT}"
+              done
+            fi
+
+            other_accounts=$(jq -c --arg curr "$current_user_address" '.accounts[] | select(.address != $curr)' state.json)
+
+            other_accounts_count=$(echo "$other_accounts" | jq -s 'length')
+            if [ "$other_accounts_count" -eq 0 ]; then
+                echo "No other accounts found, exiting..."
+                break
+            fi
+
+            jq -c '.contracts | map(select(.type=="token"))[]' state.json | while read -r contract; do
+              token_address=$(echo "$contract" | jq -r '.address')
+
+              public_balance=$(aztec-wallet simulate balance_of_public -ca "$token_address" --args $current_user_address -f $current_user_address --node-url http://104.198.9.16:8080 | grep "Simulation result:" | awk '{print $3}' | tr -d 'n')
+
+              echo "Public balance $public_balance"
+
+              amount_to_transfer=$(($public_balance/2/$other_accounts_count))
+              echo "Amount to transfer $amount_to_transfer"
+
+              echo "$other_accounts" | while read -r other_account; do
+                other_address=$(echo "$other_account" | jq -r '.address')
+
+                echo "Token address: $token_address, Current address: $current_user_address, Other address: $other_address"
+
+                aztec-wallet send transfer_in_public -ca "$token_address" --args "$current_user_address" "$other_address" $amount_to_transfer 0 -f "$current_user_address" --node-url http://104.198.9.16:8080
+              done
+            done
+          done
+
+      - name: Update state
+        run: |
+          # Add new account to array
+          jq '.last_modified = (now | tostring)' state.json > tmp.json && mv tmp.json state.json
+          cat ./state.json
+
+      - name: Upload state to S3
+        run: |
+          aws s3 cp ./state.json ${{ env.CONTRACT_S3_BUCKET }}/build-cache/devnet-nightly-tests-state.json
+  npm-packages:
+    runs-on: ubuntu-latest
+    container: node:18
+    steps:
+      - name: clone repository
+        uses: actions/checkout@v4
+        with:
+          repository: sklppy88/devnet-nightly
+      - name: install and test
+        run: |
+          npm install
+          npm run test
