@@ -581,29 +581,16 @@ export const deployL1Contracts = async (
   // Transaction hashes to await
   const txHashes: Hex[] = [];
 
-  if (args.acceleratedTestDeployments || !(await feeAsset.read.freeForAll())) {
+  if (args.acceleratedTestDeployments || !(await feeAsset.read.minters([coinIssuerAddress.toString()]))) {
     const { txHash } = await deployer.sendTransaction({
       to: feeAssetAddress.toString(),
       data: encodeFunctionData({
         abi: l1Artifacts.feeAsset.contractAbi,
-        functionName: 'setFreeForAll',
-        args: [true],
-      }),
-    });
-    logger.verbose(`Fee asset set to free for all in ${txHash}`);
-    txHashes.push(txHash);
-  }
-
-  if (args.acceleratedTestDeployments || (await feeAsset.read.owner()) !== getAddress(coinIssuerAddress.toString())) {
-    const { txHash } = await deployer.sendTransaction({
-      to: feeAssetAddress.toString(),
-      data: encodeFunctionData({
-        abi: l1Artifacts.feeAsset.contractAbi,
-        functionName: 'transferOwnership',
+        functionName: 'addMinter',
         args: [coinIssuerAddress.toString()],
       }),
     });
-    logger.verbose(`Fee asset transferred ownership to coin issuer in ${txHash}`);
+    logger.verbose(`Added coin issuer ${coinIssuerAddress} as minter on fee asset in ${txHash}`);
     txHashes.push(txHash);
   }
 

@@ -126,6 +126,10 @@ contract RollupCore is
     CheatLib.setProtocolContractTreeRoot(_protocolContractTreeRoot);
   }
 
+  function updateManaTarget(uint256 _manaTarget) external override(ITestRollup) onlyOwner {
+    FeeLib.updateManaTarget(_manaTarget);
+  }
+
   /* -------------------------------------------------------------------------- */
   /*                          CHEAT CODES END HERE                              */
   /* -------------------------------------------------------------------------- */
