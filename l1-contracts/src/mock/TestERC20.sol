@@ -9,10 +9,10 @@ import {IMintableERC20} from "./../governance/interfaces/IMintableERC20.sol";
 contract TestERC20 is ERC20, IMintableERC20, Ownable {
   mapping(address => bool) public minters;
 
-  error NotMinter(address caller);
-
   event MinterAdded(address indexed minter);
   event MinterRemoved(address indexed minter);
+
+  error NotMinter(address caller);
 
   modifier onlyMinter() {
     require(minters[msg.sender], NotMinter(msg.sender));
