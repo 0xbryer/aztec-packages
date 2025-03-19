@@ -37,14 +37,14 @@ contract TestERC20Test is Test {
     vm.assume(_minter != address(this));
     vm.assume(_minter != address(0));
 
-    testERC20.addMinter(address(_minter));
-
     vm.assume(_caller != address(_minter));
     vm.assume(_caller != address(this));
     vm.assume(_caller != address(0));
 
     vm.prank(address(_caller));
     vm.expectRevert();
+    testERC20.addMinter(address(_minter));
+
     testERC20.addMinter(address(_minter));
 
     vm.prank(address(_caller));

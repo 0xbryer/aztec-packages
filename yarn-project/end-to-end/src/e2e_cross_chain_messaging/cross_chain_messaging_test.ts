@@ -132,9 +132,6 @@ export class CrossChainMessagingTest {
           client: walletClient,
         });
 
-        // allow anyone to mint
-        await underlyingERC20.write.setFreeForAll([true], {} as any);
-
         this.logger.verbose(`Setting up cross chain harness...`);
         this.crossChainTestHarness = await CrossChainTestHarness.new(
           this.aztecNode,
