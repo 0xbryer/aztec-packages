@@ -7,27 +7,41 @@ import {ERC20} from "@oz/token/ERC20/ERC20.sol";
 import {IMintableERC20} from "./../governance/interfaces/IMintableERC20.sol";
 
 contract TestERC20 is ERC20, IMintableERC20, Ownable {
-  bool public freeForAll = false;
+  mapping(address => bool) public minters;
 
-  modifier ownerOrFreeForAll() {
-    if (msg.sender != owner() && !freeForAll) {
-      revert("Not owner or free for all");
-    }
+  modifier onlyMinter() {
+    require(minters[msg.sender], "Not authorized to mint");
     _;
   }
 
   constructor(string memory _name, string memory _symbol, address _owner)
     ERC20(_name, _symbol)
     Ownable(_owner)
-  {}
-
-  // solhint-disable-next-line comprehensive-interface
-  function setFreeForAll(bool _freeForAll) external onlyOwner {
-    freeForAll = _freeForAll;
+  {
+    minters[_owner] = true;
   }
 
-  function mint(address _to, uint256 _amount) external override(IMintableERC20) ownerOrFreeForAll {
+  function addMinter(address _minter) external override(IMintableERC20) onlyMinter {
+    require(_minter != address(0), "Invalid address");
+    minters[_minter] = true;
+  }
+
+  function removeMinter(address _minter) external override(IMintableERC20) onlyMinter {
+    require(_minter != owner(), "Cannot remove owner as minter");
+    minters[_minter] = false;
+  }
+
+  function mint(address _to, uint256 _amount) external override(IMintableERC20) onlyMinter {
     _mint(_to, _amount);
+  }
+
+  function transferOwnership(address newOwner) public override(Ownable) onlyOwner {
+    if (newOwner == address(0)) {
+      revert OwnableInvalidOwner(address(0));
+    }
+    minters[owner()] = false;
+    _transferOwnership(newOwner);
+    minters[newOwner] = true;
   }
 }
 // docs:end:contract
