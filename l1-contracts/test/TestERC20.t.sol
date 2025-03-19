@@ -22,18 +22,23 @@ contract TestERC20Test is Test {
     vm.expectRevert();
     testERC20.mint(address(this), 100);
 
+    vm.expectEmit();
+    emit TestERC20.MinterAdded(_minter);
     testERC20.addMinter(address(_minter));
 
     vm.prank(address(_minter));
     testERC20.mint(address(this), 100);
 
+    vm.expectEmit();
+    emit TestERC20.MinterRemoved(_minter);
     testERC20.removeMinter(address(_minter));
+
     vm.prank(address(_minter));
     vm.expectRevert();
     testERC20.mint(address(this), 100);
   }
 
-  function test_onlyMinterCanAddRemoveMinter(address _minter, address _caller) public {
+  function test_onlyOwnerCanAddRemoveMinter(address _minter, address _caller) public {
     vm.assume(_minter != address(this));
     vm.assume(_minter != address(0));
 
@@ -81,15 +86,5 @@ contract TestERC20Test is Test {
   function test_cannotTransferOwnershipToZeroAddress() public {
     vm.expectRevert();
     testERC20.transferOwnership(address(0));
-  }
-
-  function test_cannotAddMinterZeroAddress() public {
-    vm.expectRevert();
-    testERC20.addMinter(address(0));
-  }
-
-  function test_cannotRemoveOwnerAsMinter() public {
-    vm.expectRevert();
-    testERC20.removeMinter(address(this));
   }
 }

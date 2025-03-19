@@ -128,6 +128,7 @@ contract RollupCore is
 
   function updateManaTarget(uint256 _manaTarget) external override(ITestRollup) onlyOwner {
     FeeLib.updateManaTarget(_manaTarget);
+    emit ITestRollup.ManaTargetUpdated(_manaTarget);
   }
 
   /* -------------------------------------------------------------------------- */

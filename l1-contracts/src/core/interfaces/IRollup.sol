@@ -122,6 +122,8 @@ struct CheatDepositArgs {
 }
 
 interface ITestRollup {
+  event ManaTargetUpdated(uint256 indexed manaTarget);
+
   function setEpochVerifier(address _verifier) external;
   function setVkTreeRoot(bytes32 _vkTreeRoot) external;
   function setProtocolContractTreeRoot(bytes32 _protocolContractTreeRoot) external;

@@ -9,8 +9,13 @@ import {IMintableERC20} from "./../governance/interfaces/IMintableERC20.sol";
 contract TestERC20 is ERC20, IMintableERC20, Ownable {
   mapping(address => bool) public minters;
 
+  error NotMinter(address caller);
+
+  event MinterAdded(address indexed minter);
+  event MinterRemoved(address indexed minter);
+
   modifier onlyMinter() {
-    require(minters[msg.sender], "Not authorized to mint");
+    require(minters[msg.sender], NotMinter(msg.sender));
     _;
   }
 
@@ -21,18 +26,18 @@ contract TestERC20 is ERC20, IMintableERC20, Ownable {
     minters[_owner] = true;
   }
 
-  function addMinter(address _minter) external override(IMintableERC20) onlyMinter {
-    require(_minter != address(0), "Invalid address");
-    minters[_minter] = true;
-  }
-
-  function removeMinter(address _minter) external override(IMintableERC20) onlyMinter {
-    require(_minter != owner(), "Cannot remove owner as minter");
-    minters[_minter] = false;
-  }
-
   function mint(address _to, uint256 _amount) external override(IMintableERC20) onlyMinter {
     _mint(_to, _amount);
+  }
+
+  function addMinter(address _minter) external override(IMintableERC20) onlyOwner {
+    minters[_minter] = true;
+    emit MinterAdded(_minter);
+  }
+
+  function removeMinter(address _minter) external override(IMintableERC20) onlyOwner {
+    minters[_minter] = false;
+    emit MinterRemoved(_minter);
   }
 
   function transferOwnership(address newOwner) public override(Ownable) onlyOwner {
